@@ -616,5 +616,128 @@ router.get("/:id/qr", authenticate, async (req, res) => {
     });
   }
 });
+// POST /api/bookings/:id/transfer
+router.post("/:id/transfer", authenticate, async (req, res) => {
+  try {
+    const bookingId = req.params.id as string;
+    const { toEmail } = req.body;
 
+    if (!toEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "VALIDATION_ERROR",
+        message: "Recipient email is required",
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Get booking
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { event: true },
+      });
+
+      if (!booking) {
+        throw new Error("NOT_FOUND:Booking not found");
+      }
+
+      // 2. Ownership check
+      if (booking.userId !== req.user!.userId) {
+        throw new Error("FORBIDDEN:You can only transfer your own ticket");
+      }
+
+      // 3. Only confirmed tickets
+      if (booking.status !== "CONFIRMED") {
+        throw new Error("INVALID_STATUS:Only confirmed tickets can be transferred");
+      }
+
+      // 4. Find recipient
+      const recipient = await tx.user.findUnique({
+        where: { email: toEmail.toLowerCase() },
+      });
+
+      if (!recipient) {
+        throw new Error("NOT_FOUND:Recipient user not found");
+      }
+
+      if (recipient.id === booking.userId) {
+        throw new Error("INVALID_REQUEST:Cannot transfer ticket to yourself");
+      }
+
+      // 5. Check duplicate booking for recipient
+      const existing = await tx.booking.findFirst({
+        where: {
+          userId: recipient.id,
+          eventId: booking.eventId,
+          status: "CONFIRMED",
+        },
+      });
+
+      if (existing) {
+        throw new Error("DUPLICATE:Recipient already has a ticket for this event");
+      }
+
+      // 6. Cancel original booking (preserve record)
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: "TRANSFERRED",
+          cancelledAt: new Date(),
+        },
+      });
+
+      // 7. Create new booking for recipient
+      const newTicketCode = `TR-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+      const newBooking = await tx.booking.create({
+        data: {
+          userId: recipient.id,
+          eventId: booking.eventId,
+          seatTierId: booking.seatTierId,
+          promoCodeId: booking.promoCodeId,
+          pricePaid: booking.pricePaid,
+          discountAmount: booking.discountAmount,
+          status: "CONFIRMED",
+          ticketCode: newTicketCode,
+          qrCodeData: booking.qrCodeData,
+        },
+        include: {
+          event: true,
+          seatTier: true,
+        },
+      });
+
+      return newBooking;
+    });
+
+    res.json({
+      success: true,
+      message: "Ticket transferred successfully",
+      data: result,
+    });
+  } catch (error: any) {
+    console.error("Transfer error:", error);
+
+    if (error.message?.includes("NOT_FOUND")) {
+      return res.status(404).json({ success: false, message: error.message.split(":")[1] });
+    }
+
+    if (error.message?.includes("FORBIDDEN")) {
+      return res.status(403).json({ success: false, message: error.message.split(":")[1] });
+    }
+
+    if (error.message?.includes("INVALID_STATUS")) {
+      return res.status(400).json({ success: false, message: error.message.split(":")[1] });
+    }
+
+    if (error.message?.includes("DUPLICATE")) {
+      return res.status(409).json({ success: false, message: error.message.split(":")[1] });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to transfer ticket",
+    });
+  }
+});
 export default router;
