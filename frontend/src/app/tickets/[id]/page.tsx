@@ -16,13 +16,19 @@ export default function TicketPage() {
   const router = useRouter();
   const { user, token, isLoading: authLoading } = useAuth();
 
+  // ---------------- STATE ----------------
   const [booking, setBooking] = useState<Booking | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [transferUserId, setTransferUserId] = useState("");
+  const [isTransferring, setIsTransferring] = useState(false);
+
+  // ---------------- FETCH DATA ----------------
   useEffect(() => {
     if (authLoading) return;
+
     if (!user || !token) {
       router.push(`/login?callbackUrl=/tickets/${params.id}`);
       return;
@@ -40,81 +46,202 @@ export default function TicketPage() {
       .finally(() => setIsLoading(false));
   }, [user, token, authLoading, router, params.id]);
 
+  // ---------------- TRANSFER LOGIC ----------------
+  const handleTransfer = async () => {
+    if (!token || !booking) return;
+
+    if (!transferUserId.trim()) {
+      alert("Please enter receiver User ID");
+      return;
+    }
+
+    try {
+      setIsTransferring(true);
+
+      const res = await fetch(`/api/bookings/${booking.id}/transfer`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          toUserId: transferUserId,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Transfer failed");
+      }
+
+      alert("Ticket transferred successfully!");
+      router.push("/bookings");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  // ---------------- LOADING ----------------
   if (authLoading || isLoading) {
-    return <div className="flex items-center justify-center min-h-[50vh]"><Spinner size="lg" /></div>;
-  }
-
-  if (error || !booking) {
-    return <div className="container py-8 text-center text-red-600">{error || "Ticket not found"}</div>;
-  }
-
-  if (booking.status !== "CONFIRMED") {
     return (
-      <div className="container py-8">
-        <Alert variant="warning">This ticket is no longer valid. Status: {booking.status}</Alert>
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <Spinner size="lg" />
       </div>
     );
   }
 
+  // ---------------- ERROR ----------------
+  if (error || !booking) {
+    return (
+      <div className="container py-8 text-center text-red-600">
+        {error || "Ticket not found"}
+      </div>
+    );
+  }
+
+  // ---------------- INVALID STATUS ----------------
+  if (booking.status !== "CONFIRMED") {
+    return (
+      <div className="container py-8">
+        <Alert variant="warning">
+          This ticket is no longer valid. Status: {booking.status}
+        </Alert>
+      </div>
+    );
+  }
+
+  // ---------------- UI ----------------
   return (
     <div className="container py-8">
       <div className="max-w-md mx-auto">
         <Card>
           <CardContent className="text-center space-y-6 py-8">
+
+            {/* EVENT INFO */}
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">{booking.event?.name}</h1>
-              {booking.event?.artistInfo && <p className="text-gray-600">{booking.event.artistInfo}</p>}
+              <h1 className="text-2xl font-bold text-gray-900">
+                {booking.event?.name}
+              </h1>
+              {booking.event?.artistInfo && (
+                <p className="text-gray-600">
+                  {booking.event.artistInfo}
+                </p>
+              )}
             </div>
 
+            {/* QR CODE */}
             {qrCode && (
               <div className="flex justify-center">
-                <img src={qrCode} alt="Ticket QR Code" className="w-64 h-64" />
+                <img
+                  src={qrCode}
+                  alt="Ticket QR Code"
+                  className="w-64 h-64"
+                />
               </div>
             )}
 
+            {/* DETAILS */}
             <div className="space-y-2 text-sm">
+
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">Date</span>
-                <span className="font-medium">{booking.event && formatDate(booking.event.date)}</span>
+                <span className="font-medium">
+                  {booking.event && formatDate(booking.event.date)}
+                </span>
               </div>
+
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">Time</span>
-                <span className="font-medium">{booking.event && formatTime(booking.event.time)}</span>
+                <span className="font-medium">
+                  {booking.event && formatTime(booking.event.time)}
+                </span>
               </div>
+
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">Venue</span>
-                <span className="font-medium">{booking.event?.venue}</span>
+                <span className="font-medium">
+                  {booking.event?.venue}
+                </span>
               </div>
+
               {booking.seatTier && (
                 <div className="flex justify-between py-2 border-b">
                   <span className="text-gray-500">Tier</span>
-                  <span className="font-medium">{booking.seatTier.name}</span>
+                  <span className="font-medium">
+                    {booking.seatTier.name}
+                  </span>
                 </div>
               )}
+
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-500">Price Paid</span>
-                <span className="font-medium">{formatCurrency(booking.pricePaid)}</span>
+                <span className="font-medium">
+                  {formatCurrency(booking.pricePaid)}
+                </span>
               </div>
+
               {booking.discountAmount > 0 && (
                 <div className="flex justify-between py-2 border-b text-green-600">
                   <span>Discount</span>
-                  <span>-{formatCurrency(booking.discountAmount)}</span>
+                  <span>
+                    -{formatCurrency(booking.discountAmount)}
+                  </span>
                 </div>
               )}
+
               <div className="flex justify-between py-2">
                 <span className="text-gray-500">Ticket Code</span>
-                <span className="font-mono font-medium">{booking.ticketCode.slice(0, 8).toUpperCase()}</span>
+                <span className="font-mono font-medium">
+                  {booking.ticketCode.slice(0, 8).toUpperCase()}
+                </span>
               </div>
+
             </div>
 
+            {/* ACTIONS */}
             <div className="pt-4 space-y-3">
-              <Button className="w-full" onClick={() => qrCode && window.open(qrCode, "_blank")}>
+
+              <Button
+                className="w-full"
+                onClick={() => qrCode && window.open(qrCode, "_blank")}
+              >
                 Download QR Code
               </Button>
-              <Button variant="ghost" className="w-full" onClick={() => router.push("/bookings")}>
+
+              {/* TRANSFER SECTION */}
+              <div className="border-t pt-4 space-y-2">
+
+                <input
+                  type="text"
+                  placeholder="Enter receiver User ID"
+                  value={transferUserId}
+                  onChange={(e) => setTransferUserId(e.target.value)}
+                  className="w-full border rounded p-2"
+                />
+
+                <Button
+                  className="w-full"
+                  onClick={handleTransfer}
+                  disabled={isTransferring}
+                >
+                  {isTransferring ? "Transferring..." : "Transfer Ticket"}
+                </Button>
+
+              </div>
+
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => router.push("/bookings")}
+              >
                 Back to Bookings
               </Button>
+
             </div>
+
           </CardContent>
         </Card>
       </div>
