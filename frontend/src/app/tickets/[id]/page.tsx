@@ -109,6 +109,54 @@ export default function TicketPage() {
 
             <div className="pt-4 space-y-3">
               <Button className="w-full" onClick={() => qrCode && window.open(qrCode, "_blank")}>
+                const [transferEmail, setTransferEmail] = useState("");
+const [isTransferring, setIsTransferring] = useState(false);
+                const handleTransfer = async () => {
+  if (!token || !booking) return;
+
+  try {
+    setIsTransferring(true);
+
+    const res = await fetch(`/api/bookings/${booking.id}/transfer`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        email: transferEmail,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.message || "Transfer failed");
+
+    alert("Ticket transferred successfully!");
+    router.push("/bookings");
+  } catch (err: any) {
+    alert(err.message);
+  } finally {
+    setIsTransferring(false);
+  }
+};
+                <div className="border-t pt-4 space-y-2">
+  <input
+    type="email"
+    placeholder="Recipient email"
+    value={transferEmail}
+    onChange={(e) => setTransferEmail(e.target.value)}
+    className="w-full border rounded p-2"
+  />
+
+  <Button
+    className="w-full"
+    onClick={handleTransfer}
+    disabled={isTransferring}
+  >
+    {isTransferring ? "Transferring..." : "Transfer Ticket"}
+  </Button>
+</div>
                 Download QR Code
               </Button>
               <Button variant="ghost" className="w-full" onClick={() => router.push("/bookings")}>
