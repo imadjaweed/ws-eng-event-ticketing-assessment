@@ -190,6 +190,15 @@ export const bookingsAPI = {
 
   getQR: (token: string, id: string) =>
     fetchAPI<{ success: boolean; data: { qrCode: string; ticketCode: string } }>(`/api/bookings/${id}/qr`, { token }),
+   transfer: (token: string, id: string, toUserId: string) =>
+    fetchAPI<{ success: boolean; message: string; data: any }>(
+      `/api/bookings/${id}/transfer`,
+      {
+        method: "POST",
+        body: JSON.stringify({ toUserId }),
+        token,
+      }
+    ),
 };
 
 // Dashboard API
