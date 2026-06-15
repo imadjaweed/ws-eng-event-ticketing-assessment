@@ -20,6 +20,8 @@ export default function TicketPage() {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [transferEmail, setTransferEmail] = useState("");
+  const [isTransferring, setIsTransferring] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -39,7 +41,26 @@ export default function TicketPage() {
       .catch((err) => setError(err.message))
       .finally(() => setIsLoading(false));
   }, [user, token, authLoading, router, params.id]);
+  const handleTransfer = async () => {
+  if (!booking || !token) return;
 
+  try {
+    setIsTransferring(true);
+
+    await bookingsAPI.transfer(
+      token,
+      booking.id,
+      transferEmail
+    );
+
+    alert("Ticket transferred successfully!");
+    router.push("/bookings");
+  } catch (err: any) {
+    alert(err.message);
+  } finally {
+    setIsTransferring(false);
+  }
+};
   if (authLoading || isLoading) {
     return <div className="flex items-center justify-center min-h-[50vh]"><Spinner size="lg" /></div>;
   }
@@ -107,14 +128,40 @@ export default function TicketPage() {
               </div>
             </div>
 
-            <div className="pt-4 space-y-3">
-              <Button className="w-full" onClick={() => qrCode && window.open(qrCode, "_blank")}>
-                Download QR Code
-              </Button>
-              <Button variant="ghost" className="w-full" onClick={() => router.push("/bookings")}>
-                Back to Bookings
-              </Button>
-            </div>
+           <div className="pt-4 space-y-3">
+  <Button
+    className="w-full"
+    onClick={() => qrCode && window.open(qrCode, "_blank")}
+  >
+    Download QR Code
+  </Button>
+
+  <div className="border-t pt-4 space-y-2">
+    <input
+      type="email"
+      placeholder="Enter recipient email"
+      value={transferEmail}
+      onChange={(e) => setTransferEmail(e.target.value)}
+      className="w-full border rounded p-2"
+    />
+
+    <Button
+      className="w-full"
+      onClick={handleTransfer}
+      disabled={isTransferring}
+    >
+      {isTransferring ? "Transferring..." : "Transfer Ticket"}
+    </Button>
+  </div>
+
+  <Button
+    variant="ghost"
+    className="w-full"
+    onClick={() => router.push("/bookings")}
+  >
+    Back to Bookings
+  </Button>
+</div>
           </CardContent>
         </Card>
       </div>
