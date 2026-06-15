@@ -1,3 +1,4 @@
+import { transferBooking } from "../lib/transfer.js";
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { createBookingSchema } from "../lib/validations.js";
@@ -190,253 +191,92 @@ router.get("/:id/refund-preview", authenticate, async (req, res) => {
 });
 
 // POST /api/bookings - Create booking (buy ticket)
-router.post("/", authenticate, async (req, res) => {
+router.post("/:id/transfer", authenticate, async (req, res) => {
   try {
-    const result = createBookingSchema.safeParse(req.body);
-    if (!result.success) {
+    const bookingId = req.params.id;
+    const { email } = req.body;
+
+    if (!email) {
       return res.status(400).json({
         success: false,
         error: "VALIDATION_ERROR",
-        message: result.error.errors[0].message,
+        message: "Recipient email is required",
       });
     }
 
-    const { eventId, seatTierId, promoCode } = result.data;
-
-    // Use transaction for atomic ticket purchase
-    const booking = await prisma.$transaction(async (tx) => {
-      const event = await tx.event.findUnique({
-        where: { id: eventId },
-        include: { seatTiers: true },
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Get booking
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
       });
 
-      if (!event) {
-        throw new Error("NOT_FOUND:Event not found");
+      if (!booking) {
+        throw new Error("NOT_FOUND:Booking not found");
       }
 
-      if (event.status !== "PUBLISHED") {
-        throw new Error("INVALID_EVENT:Event is not available for booking");
+      // 2. Validate ownership
+      if (booking.userId !== req.user!.userId) {
+        throw new Error("FORBIDDEN:You can only transfer your own tickets");
       }
 
-      // Check if user already has a booking for this event
-      const existingBooking = await tx.booking.findFirst({
-        where: {
-          userId: req.user!.userId,
-          eventId,
-          status: "CONFIRMED",
-        },
+      // 3. Validate status
+      if (booking.status === "CANCELLED") {
+        throw new Error("INVALID_STATUS:Cannot transfer cancelled booking");
+      }
+
+      // 4. Find recipient
+      const recipient = await tx.user.findUnique({
+        where: { email },
       });
 
-      if (existingBooking) {
-        throw new Error("DUPLICATE:You already have a ticket for this event");
+      if (!recipient) {
+        throw new Error("NOT_FOUND:User not found");
       }
 
-      // Determine price based on tier or event base price
-      let ticketPrice = event.price;
-      let selectedTierId: string | null = null;
-
-      if (event.seatTiers.length > 0) {
-        // Event has tiers — tier selection is required
-        if (!seatTierId) {
-          throw new Error("VALIDATION:Please select a seat tier");
-        }
-
-        const tier = event.seatTiers.find((t) => t.id === seatTierId);
-        if (!tier) {
-          throw new Error("NOT_FOUND:Selected tier not found");
-        }
-
-        if (tier.soldCount >= tier.capacity) {
-          throw new Error("SOLD_OUT:Selected tier is sold out");
-        }
-
-        ticketPrice = tier.price;
-        selectedTierId = tier.id;
-      } else {
-        // No tiers — use event-level capacity
-        if (event.soldCount >= event.capacity) {
-          throw new Error("SOLD_OUT:Event is sold out");
-        }
+      if (recipient.id === booking.userId) {
+        throw new Error("INVALID:Cannot transfer to yourself");
       }
 
-      // Increment capacity using centralized helper
-      await incrementCapacity(tx, eventId, selectedTierId);
-
-      // Handle promo code
-      let discountAmount = 0;
-      let appliedPromoId: string | null = null;
-
-      if (promoCode) {
-        const promo = await tx.promoCode.findUnique({
-          where: { eventId_code: { eventId, code: promoCode.toUpperCase() } },
-        });
-
-        if (!promo || !promo.isActive) {
-          throw new Error("INVALID_CODE:Invalid promo code");
-        }
-
-        if (promo.usageLimit && promo.usageCount >= promo.usageLimit) {
-          throw new Error("CODE_EXHAUSTED:This code has reached its usage limit");
-        }
-
-        // Check promo code date validity
-        const now = new Date();
-        if (promo.validFrom && now < new Date(promo.validFrom)) {
-          throw new Error("INVALID_CODE:This promo code is not yet active");
-        }
-        if (promo.validUntil && now > new Date(promo.validUntil)) {
-          throw new Error("INVALID_CODE:This promo code has expired");
-        }
-
-        // Check minimum purchase amount
-        if (promo.minPurchaseAmount && ticketPrice < promo.minPurchaseAmount) {
-          throw new Error(
-            `MIN_PURCHASE:Minimum purchase of $${promo.minPurchaseAmount.toFixed(2)} required for this code`
-          );
-        }
-
-        // Calculate discount
-        if (promo.discountType === "PERCENTAGE") {
-          discountAmount = ticketPrice * (promo.discountValue / 100);
-          // Apply max discount cap if set
-          if (promo.maxDiscountAmount && discountAmount > promo.maxDiscountAmount) {
-            discountAmount = promo.maxDiscountAmount;
-          }
-        } else {
-          discountAmount = promo.discountValue;
-        }
-
-        // Ensure discount doesn't exceed ticket price
-        discountAmount = Math.min(discountAmount, ticketPrice);
-
-        // Increment usage count
-        await tx.promoCode.update({
-          where: { id: promo.id },
-          data: { usageCount: { increment: 1 } },
-        });
-
-        appliedPromoId = promo.id;
-      }
-
-      const finalPrice = Math.round((ticketPrice - discountAmount) * 100) / 100;
-
-      // Generate ticket
-      const ticketCode = generateTicketCode();
-      const qrCodeData = generateQRData(ticketCode);
-
-      // Create booking
-      const newBooking = await tx.booking.create({
-        data: {
-          ticketCode,
-          qrCodeData,
-          userId: req.user!.userId,
-          eventId,
-          seatTierId: selectedTierId,
-          promoCodeId: appliedPromoId,
-          pricePaid: finalPrice,
-          discountAmount,
-          status: "CONFIRMED",
-        },
-        include: {
-          event: {
-            select: {
-              id: true,
-              name: true,
-              date: true,
-              time: true,
-              venue: true,
-            },
-          },
-          seatTier: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-            },
-          },
-        },
-      });
-
-      return newBooking;
+      // 5. Perform transfer using shared utility
+      return await transferBooking(tx, bookingId, recipient.id);
     });
 
-    res.status(201).json({
+    res.json({
       success: true,
-      data: booking,
-      message: "Ticket purchased successfully",
+      message: "Ticket transferred successfully",
+      data: result,
     });
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error("Error creating booking:", err);
+  } catch (error: any) {
+    console.error("Transfer error:", error);
 
-    if (err.message?.startsWith("NOT_FOUND:")) {
+    if (error.message?.startsWith("NOT_FOUND:")) {
       return res.status(404).json({
         success: false,
         error: "NOT_FOUND",
-        message: err.message.split(":")[1],
+        message: error.message.split(":")[1],
       });
     }
 
-    if (err.message?.startsWith("SOLD_OUT:")) {
-      return res.status(409).json({
+    if (error.message?.startsWith("FORBIDDEN:")) {
+      return res.status(403).json({
         success: false,
-        error: "SOLD_OUT",
-        message: err.message.split(":")[1],
+        error: "FORBIDDEN",
+        message: error.message.split(":")[1],
       });
     }
 
-    if (err.message?.startsWith("INVALID_EVENT:")) {
+    if (error.message?.startsWith("INVALID_STATUS:")) {
       return res.status(400).json({
         success: false,
-        error: "INVALID_EVENT",
-        message: err.message.split(":")[1],
-      });
-    }
-
-    if (err.message?.startsWith("DUPLICATE:")) {
-      return res.status(409).json({
-        success: false,
-        error: "DUPLICATE",
-        message: err.message.split(":")[1],
-      });
-    }
-
-    if (err.message?.startsWith("VALIDATION:")) {
-      return res.status(400).json({
-        success: false,
-        error: "VALIDATION_ERROR",
-        message: err.message.split(":")[1],
-      });
-    }
-
-    if (err.message?.startsWith("INVALID_CODE:")) {
-      return res.status(400).json({
-        success: false,
-        error: "INVALID_CODE",
-        message: err.message.split(":")[1],
-      });
-    }
-
-    if (err.message?.startsWith("CODE_EXHAUSTED:")) {
-      return res.status(400).json({
-        success: false,
-        error: "CODE_EXHAUSTED",
-        message: err.message.split(":")[1],
-      });
-    }
-
-    if (err.message?.startsWith("MIN_PURCHASE:")) {
-      return res.status(400).json({
-        success: false,
-        error: "MIN_PURCHASE",
-        message: err.message.split(":")[1],
+        error: "INVALID_STATUS",
+        message: error.message.split(":")[1],
       });
     }
 
     res.status(500).json({
       success: false,
       error: "INTERNAL_ERROR",
-      message: "Failed to create booking",
+      message: "Failed to transfer ticket",
     });
   }
 });
