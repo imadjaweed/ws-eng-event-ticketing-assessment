@@ -494,7 +494,30 @@ router.delete("/:id", authenticate, async (req, res) => {
 
       // Decrement capacity using centralized helper
       await decrementCapacity(tx, booking);
+     // AUTO ASSIGN FROM WAITLIST
+const nextInLine = await tx.waitlist.findFirst({
+  where: { eventId: booking.eventId },
+  orderBy: { createdAt: "asc" },
+});
 
+if (nextInLine) {
+  // create booking for waitlisted user
+  await tx.booking.create({
+    data: {
+      userId: nextInLine.userId,
+      eventId: booking.eventId,
+      ticketCode: generateTicketCode(),
+      qrCodeData: generateQRData(generateTicketCode()),
+      pricePaid: booking.pricePaid,
+      status: "CONFIRMED",
+    },
+  });
+
+  // remove from waitlist
+  await tx.waitlist.delete({
+    where: { id: nextInLine.id },
+  });
+}
       // Restore promo code usage if one was applied
       if (booking.promoCodeId) {
         await tx.promoCode.update({
