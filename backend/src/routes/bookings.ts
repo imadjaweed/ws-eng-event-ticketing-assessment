@@ -616,5 +616,83 @@ router.get("/:id/qr", authenticate, async (req, res) => {
     });
   }
 });
+router.post("/:id/transfer", authenticate, async (req, res) => {
+  try {
+    const { toUserId } = req.body;
+
+    if (!toUserId) {
+      return res.status(400).json({
+        success: false,
+        error: "VALIDATION_ERROR",
+        message: "Recipient userId is required",
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Find booking
+      const booking = await tx.booking.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!booking) {
+        throw new Error("NOT_FOUND:Booking not found");
+      }
+
+      // 2. Check ownership
+      if (booking.userId !== req.user!.userId) {
+        throw new Error("FORBIDDEN:You can only transfer your own ticket");
+      }
+
+      // 3. Check status
+      if (booking.status !== "CONFIRMED") {
+        throw new Error("INVALID_STATUS:Only confirmed tickets can be transferred");
+      }
+
+      // 4. Prevent self-transfer
+      if (booking.userId === toUserId) {
+        throw new Error("INVALID:Cannot transfer to same user");
+      }
+
+      // 5. Transfer ownership
+      const updated = await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          userId: toUserId,
+        },
+        include: {
+          event: true,
+          seatTier: true,
+        },
+      });
+
+      return updated;
+    });
+
+    res.json({
+      success: true,
+      message: "Ticket transferred successfully",
+      data: result,
+    });
+  } catch (error: any) {
+    console.error("Transfer error:", error);
+
+    if (error.message?.includes("NOT_FOUND")) {
+      return res.status(404).json({ success: false, message: "Booking not found" });
+    }
+
+    if (error.message?.includes("FORBIDDEN")) {
+      return res.status(403).json({ success: false, message: error.message });
+    }
+
+    if (error.message?.includes("INVALID_STATUS")) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Transfer failed",
+    });
+  }
+});
 
 export default router;
