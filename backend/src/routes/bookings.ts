@@ -616,5 +616,68 @@ router.get("/:id/qr", authenticate, async (req, res) => {
     });
   }
 });
+// POST /api/bookings/:id/transfer - Transfer ticket to another user
+router.post("/:id/transfer", authenticate, async (req, res) => {
+  try {
+    const { toUserId } = req.body;
 
+    if (!toUserId) {
+      return res.status(400).json({
+        success: false,
+        error: "VALIDATION_ERROR",
+        message: "Receiver userId is required",
+      });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!booking) {
+        throw new Error("NOT_FOUND:Booking not found");
+      }
+
+      if (booking.userId !== req.user!.userId) {
+        throw new Error("FORBIDDEN:You can only transfer your own ticket");
+      }
+
+      if (booking.status !== "CONFIRMED") {
+        throw new Error("INVALID_STATUS:Only confirmed tickets can be transferred");
+      }
+
+      // Update ownership
+      const updated = await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          userId: toUserId,
+        },
+      });
+
+      return updated;
+    });
+
+    res.json({
+      success: true,
+      message: "Ticket transferred successfully",
+      data: result,
+    });
+  } catch (error: any) {
+    console.error("Transfer error:", error);
+
+    if (error.message?.includes(":")) {
+      const [code, message] = error.message.split(":");
+      return res.status(400).json({
+        success: false,
+        error: code,
+        message,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Transfer failed",
+    });
+  }
+});
 export default router;
