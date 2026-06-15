@@ -618,3 +618,7 @@ router.get("/:id/qr", authenticate, async (req, res) => {
 });
 
 export default router;
+// ADD TRANSFER ROUTE HERE (NEW FEATURE)
+router.post("/:id/transfer", authenticate, async (req, res) => {
+  ...
+});
