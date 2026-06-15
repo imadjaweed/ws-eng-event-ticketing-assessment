@@ -107,14 +107,34 @@ export default function TicketPage() {
               </div>
             </div>
 
-            <div className="pt-4 space-y-3">
-              <Button className="w-full" onClick={() => qrCode && window.open(qrCode, "_blank")}>
-                Download QR Code
-              </Button>
-              <Button variant="ghost" className="w-full" onClick={() => router.push("/bookings")}>
-                Back to Bookings
-              </Button>
-            </div>
+          <div className="pt-4 space-y-3">
+  <Button className="w-full" onClick={() => qrCode && window.open(qrCode, "_blank")}>
+    Download QR Code
+  </Button>
+
+  {/* TRANSFER SECTION */}
+  <div className="border-t pt-4 space-y-2">
+    <input
+      type="email"
+      placeholder="Recipient email"
+      value={transferEmail}
+      onChange={(e) => setTransferEmail(e.target.value)}
+      className="w-full border rounded p-2"
+    />
+
+    <Button
+      className="w-full"
+      onClick={handleTransfer}
+      disabled={isTransferring}
+    >
+      {isTransferring ? "Transferring..." : "Transfer Ticket"}
+    </Button>
+  </div>
+
+  <Button variant="ghost" className="w-full" onClick={() => router.push("/bookings")}>
+    Back to Bookings
+  </Button>
+</div>
           </CardContent>
         </Card>
       </div>
