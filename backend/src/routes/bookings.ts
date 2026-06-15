@@ -616,5 +616,90 @@ router.get("/:id/qr", authenticate, async (req, res) => {
     });
   }
 });
+// ================================
+// POST /api/bookings/:id/transfer
+// ================================
+router.post("/:id/transfer", authenticate, async (req, res) => {
+  try {
+    const { toEmail } = req.body;
 
+    if (!toEmail) {
+      return res.status(400).json({
+        success: false,
+        error: "VALIDATION_ERROR",
+        message: "Recipient email is required",
+      });
+    }
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.id },
+      include: { event: true },
+    });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        error: "NOT_FOUND",
+        message: "Booking not found",
+      });
+    }
+
+    if (booking.userId !== req.user!.userId) {
+      return res.status(403).json({
+        success: false,
+        error: "FORBIDDEN",
+        message: "You can only transfer your own tickets",
+      });
+    }
+
+    if (booking.status !== "CONFIRMED") {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_STATUS",
+        message: "Only confirmed tickets can be transferred",
+      });
+    }
+
+    const recipient = await prisma.user.findUnique({
+      where: { email: toEmail },
+    });
+
+    if (!recipient) {
+      return res.status(404).json({
+        success: false,
+        error: "USER_NOT_FOUND",
+        message: "Recipient not found",
+      });
+    }
+
+    if (recipient.id === booking.userId) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_TRANSFER",
+        message: "Cannot transfer ticket to yourself",
+      });
+    }
+
+    // 🔁 TRANSFER (ownership change)
+    const updated = await prisma.booking.update({
+      where: { id: booking.id },
+      data: {
+        userId: recipient.id,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Ticket transferred successfully",
+      data: updated,
+    });
+  } catch (error) {
+    console.error("Transfer error:", error);
+    res.status(500).json({
+      success: false,
+      error: "INTERNAL_ERROR",
+      message: "Failed to transfer ticket",
+    });
+  }
+});
 export default router;
